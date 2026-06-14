@@ -42,7 +42,7 @@
 
 import { prisma } from "../lib/prisma";
 import { isActiveMember, getActiveMembership } from "../lib/membership";
-import { GroupRole } from "@prisma/client";
+import { PrismaClient, GroupRole, Prisma, GroupMembership, Group, User } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
 // Custom error classes (service layer only — routes catch these)
@@ -129,7 +129,7 @@ export class CannotEndOwnMembershipError extends Error {
  * did you create the group" date separate from when you joined it.
  */
 export async function createGroup(params: { name: string; creatorId: string }) {
-  return prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const group = await tx.group.create({
       data: { name: params.name },
     });
@@ -181,7 +181,7 @@ export async function listGroupsForUser(userId: string) {
     orderBy: { group: { createdAt: "desc" } },
   });
 
-  return memberships.map((m) => ({
+  return memberships.map((m: GroupMembership & { group: Group & { memberships: { id: string }[] } }) => ({
     id: m.group.id,
     name: m.group.name,
     createdAt: m.group.createdAt,
@@ -227,8 +227,8 @@ export async function getGroupDetail(params: { groupId: string; requesterId: str
 
   const now = new Date();
   const currentMembers = group.memberships
-    .filter((m) => m.leftAt === null || m.leftAt >= now)
-    .map((m) => ({
+    .filter((m: GroupMembership & { user: { id: string; displayName: string; email: string } }) => m.leftAt === null || m.leftAt >= now)
+    .map((m: GroupMembership & { user: { id: string; displayName: string; email: string } }) => ({
       membershipId: m.id,
       userId: m.user.id,
       displayName: m.user.displayName,
@@ -239,8 +239,8 @@ export async function getGroupDetail(params: { groupId: string; requesterId: str
     }));
 
   const pastMembers = group.memberships
-    .filter((m) => m.leftAt !== null && m.leftAt < now)
-    .map((m) => ({
+    .filter((m: GroupMembership & { user: { id: string; displayName: string; email: string } }) => m.leftAt !== null && m.leftAt < now)
+    .map((m: GroupMembership & { user: { id: string; displayName: string; email: string } }) => ({
       membershipId: m.id,
       userId: m.user.id,
       displayName: m.user.displayName,

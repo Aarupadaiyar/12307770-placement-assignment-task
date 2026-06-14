@@ -1,4 +1,5 @@
-import { PrismaClient, Prisma, ImportRowStatus } from "@prisma/client";
+import { PrismaClient, Prisma, ImportRowStatus, ImportRow, ImportDecision, User } from "@prisma/client";
+import { Decimal } from "@prisma/client/runtime/library";
 import { parseCsv } from "./csvParser";
 import { detectAnomalies, RawRowData } from "./anomalyDetector";
 import { extractCsvParticipants, upsertCsvIdentitiesForJob } from "./memberMapping.service";
@@ -104,7 +105,7 @@ export async function runAnomalyPhase(jobId: string, groupId: string) {
       groupId,
       row.rowNumber,
       raw,
-      stagedRows.map((r) => ({ rowNumber: r.rowNumber, rawData: r.rawData as RawRowData }))
+      stagedRows.map((r: ImportRow) => ({ rowNumber: r.rowNumber, rawData: r.rawData as RawRowData }))
     );
 
     if (anomalies.length > 0) {
@@ -176,7 +177,7 @@ export async function submitDecision(
   jobId: string,
   rowId: string,
   resolution: AnomalyResolution,
-  details: any,
+  details: Prisma.InputJsonValue | undefined,
   userId: string
 ) {
   // Upsert decision record
@@ -184,7 +185,7 @@ export async function submitDecision(
     where: { importRowId: rowId },
     update: {
       resolution,
-      decisionDetails: details || {},
+      decisionDetails: (details as Prisma.InputJsonValue) ?? Prisma.JsonNull,
       resolvedById: userId,
       resolvedAt: new Date(),
     },
@@ -192,7 +193,7 @@ export async function submitDecision(
       importJobId: jobId,
       importRowId: rowId,
       resolution,
-      decisionDetails: details || {},
+      decisionDetails: (details as Prisma.InputJsonValue) ?? Prisma.JsonNull,
       resolvedById: userId,
     },
   });
@@ -239,11 +240,11 @@ async function updateReportStats(jobId: string) {
   });
 
   const totalRows = rows.length;
-  const cleanRows = rows.filter((r) => r.status === ImportRowStatus.CLEAN).length;
-  const resolvedCount = rows.filter((r) => r.status === ImportRowStatus.RESOLVED).length;
-  const excludedCount = rows.filter((r) => r.status === ImportRowStatus.EXCLUDED).length;
+  const cleanRows = rows.filter((r: ImportRow & { decisions: ImportDecision | null }) => r.status === ImportRowStatus.CLEAN).length;
+  const resolvedCount = rows.filter((r: ImportRow & { decisions: ImportDecision | null }) => r.status === ImportRowStatus.RESOLVED).length;
+  const excludedCount = rows.filter((r: ImportRow & { decisions: ImportDecision | null }) => r.status === ImportRowStatus.EXCLUDED).length;
   const duplicatesCount = rows.filter(
-    (r) => r.decisions[0]?.resolution === AnomalyResolution.MARK_AS_DUPLICATE_OF
+    (r: ImportRow & { decisions: ImportDecision | null }) => r.decisions?.resolution === AnomalyResolution.MARK_AS_DUPLICATE_OF
   ).length;
 
   const anomaliesCount = await prisma.importAnomaly.count({
@@ -275,19 +276,19 @@ export async function commitImportJob(jobId: string, userId: string) {
   if (!job) throw new Error("Import job not found");
   if (job.status === ImportJobStatus.COMMITTED) throw new Error("Job already committed");
 
-  const uncommittedPending = job.rows.filter((r) => r.status === ImportRowStatus.PENDING);
+  const uncommittedPending = job.rows.filter((r: ImportRow) => r.status === ImportRowStatus.PENDING);
   if (uncommittedPending.length > 0) {
     throw new Error(`Cannot commit: ${uncommittedPending.length} rows are still pending review.`);
   }
 
   // Atomically write staging data to real tables inside database transaction
-  const resultReport = await prisma.$transaction(async (tx) => {
+  const resultReport = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     for (const row of job.rows) {
       if (row.status === ImportRowStatus.EXCLUDED) {
         continue;
       }
 
-      const decision = row.decisions[0];
+      const decision = row.decisions;
       const raw = row.rawData as RawRowData;
       const details = decision?.decisionDetails as any || {};
 
@@ -310,7 +311,7 @@ export async function commitImportJob(jobId: string, userId: string) {
 
       // Parse fields
       const date = new Date(dateStr);
-      const parsedAmount = new Prisma.Decimal(parseFloat(amountStr.replace(/,/g, "")));
+      const parsedAmount = new Decimal(parseFloat(amountStr.replace(/,/g, "")));
       const currency = currencyStr === "USD" ? Currency.USD : Currency.INR;
       const splitType = splitTypeStr as SplitType;
 
@@ -377,12 +378,12 @@ export async function commitImportJob(jobId: string, userId: string) {
       } else {
         // Calculate FX Conversion (USD -> INR)
         let amountInr = parsedAmount;
-        let fxRateToInr: Prisma.Decimal | null = null;
+        let fxRateToInr: Decimal | null = null;
         let fxRateDate: Date | null = null;
 
         if (currency === Currency.USD) {
           const rate = getMockFxRate(date);
-          fxRateToInr = new Prisma.Decimal(rate);
+          fxRateToInr = new Decimal(rate);
           amountInr = parsedAmount.mul(fxRateToInr);
           fxRateDate = date;
         }
@@ -407,7 +408,7 @@ export async function commitImportJob(jobId: string, userId: string) {
 
         // Compute participant splits
         const participants = splitWithStr.split(/[;,]/).map((p: string) => p.trim()).filter(Boolean);
-        const resolvedParticipants: any[] = [];
+        const resolvedParticipants: User[] = [];
         for (const p of participants) {
           const resolvedPart = await tx.user.findFirst({
             where: {
@@ -430,7 +431,7 @@ export async function commitImportJob(jobId: string, userId: string) {
 
         if (splitType === SplitType.EQUAL) {
           const splitShare = amountInr.div(memberCount);
-          resolvedParticipants.forEach((part) => {
+          resolvedParticipants.forEach((part: User) => {
             splitsData.push({
               expenseId: expense.id,
               userId: part.id,
@@ -450,19 +451,19 @@ export async function commitImportJob(jobId: string, userId: string) {
           });
 
           // Calculate normalized percent sum if sum != 100
-          let sumPercent = Object.values(percentMap).reduce((a, b) => a + b, 0);
+          let sumPercent = Object.values(percentMap).reduce((a: number, b: number) => a + b, 0);
           const needsNormalize = Math.abs(sumPercent - 100) > 0.01;
 
           for (const part of resolvedParticipants) {
             const rawPct = percentMap[part.displayName.toLowerCase()] || percentMap[part.email.toLowerCase()] || 0;
             const pct = needsNormalize ? (rawPct / sumPercent) * 100 : rawPct;
-            const splitShare = amountInr.mul(new Prisma.Decimal(pct / 100));
+            const splitShare = amountInr.mul(new Decimal(pct / 100));
 
             splitsData.push({
               expenseId: expense.id,
               userId: part.id,
               amount: splitShare,
-              shareValue: new Prisma.Decimal(rawPct),
+              shareValue: new Decimal(rawPct),
             });
           }
         } else if (splitType === SplitType.SHARE && splitDetailsStr) {
@@ -477,17 +478,17 @@ export async function commitImportJob(jobId: string, userId: string) {
             }
           });
 
-          const totalShares = Object.values(shareMap).reduce((a, b) => a + b, 0);
+          const totalShares = Object.values(shareMap).reduce((a: number, b: number) => a + b, 0);
 
           for (const part of resolvedParticipants) {
             const rawShare = shareMap[part.displayName.toLowerCase()] || shareMap[part.email.toLowerCase()] || 0;
-            const splitShare = totalShares > 0 ? amountInr.mul(new Prisma.Decimal(rawShare / totalShares)) : new Prisma.Decimal(0);
+            const splitShare = totalShares > 0 ? amountInr.mul(new Decimal(rawShare / totalShares)) : new Decimal(0);
 
             splitsData.push({
               expenseId: expense.id,
               userId: part.id,
               amount: splitShare,
-              shareValue: new Prisma.Decimal(rawShare),
+              shareValue: new Decimal(rawShare),
             });
           }
         } else if (splitType === SplitType.UNEQUAL && splitDetailsStr) {
@@ -503,15 +504,15 @@ export async function commitImportJob(jobId: string, userId: string) {
           });
 
           // Check rescaling if sum does not match total amount
-          let sumSplitVal = Object.values(amountMap).reduce((a, b) => a + b, 0);
+          let sumSplitVal = Object.values(amountMap).reduce((a: number, b: number) => a + b, 0);
           const originalTotal = parseFloat(amountStr.replace(/,/g, ""));
           const needsRescale = Math.abs(sumSplitVal - originalTotal) > 0.05;
 
           for (const part of resolvedParticipants) {
             const rawVal = amountMap[part.displayName.toLowerCase()] || amountMap[part.email.toLowerCase()] || 0;
-            let finalValInr = new Prisma.Decimal(rawVal);
+            let finalValInr = new Decimal(rawVal);
             if (needsRescale && sumSplitVal > 0) {
-              finalValInr = new Prisma.Decimal((rawVal / sumSplitVal) * originalTotal);
+              finalValInr = new Decimal((rawVal / sumSplitVal) * originalTotal);
             }
             // If original was USD, scale is in USD so we must multiply by FX rate to get INR
             if (currency === Currency.USD && fxRateToInr) {
@@ -522,7 +523,7 @@ export async function commitImportJob(jobId: string, userId: string) {
               expenseId: expense.id,
               userId: part.id,
               amount: finalValInr,
-              shareValue: new Prisma.Decimal(rawVal),
+              shareValue: new Decimal(rawVal),
             });
           }
         }

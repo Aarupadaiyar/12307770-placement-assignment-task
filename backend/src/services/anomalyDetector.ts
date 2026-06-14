@@ -1,6 +1,6 @@
 // backend/src/services/anomalyDetector.ts
 
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, User, GroupMembership } from "@prisma/client";
 import { AnomalyType, AnomalySeverity, Currency, SplitType } from "shared";
 
 const prisma = new PrismaClient();
@@ -204,7 +204,7 @@ export async function detectAnomalies(
 
   // 3. Payer checks
   const paidBy = rawData.paid_by?.trim();
-  let payerUser: any = null;
+  let payerUser: User | null = null;
   if (!paidBy) {
     anomalies.push({
       anomalyType: AnomalyType.MISSING_PAYER,
@@ -436,7 +436,7 @@ export async function detectAnomalies(
   if (parsedDate && !isNaN(parsedAmount) && paidBy) {
     // A. Check intra-job duplicates in the currently uploaded file list
     const intraDuplicate = allJobRows.find(
-      (r) =>
+      (r: { rowNumber: number; rawData: RawRowData }) =>
         r.rowNumber !== rowNumber &&
         r.rawData.date === rawData.date &&
         r.rawData.amount === rawData.amount &&
@@ -538,7 +538,7 @@ async function checkMembershipStatus(groupId: string, userId: string, date: Date
   }
 
   // Find membership window covering date
-  const valid = memberships.find((m) => {
+  const valid = memberships.find((m: GroupMembership) => {
     const start = new Date(m.joinedAt);
     const end = m.leftAt ? new Date(m.leftAt) : null;
     return start <= date && (end === null || end >= date);

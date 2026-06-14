@@ -1,6 +1,6 @@
 // backend/src/services/memberMapping.service.ts
 
-import { PrismaClient, CsvMappingStatus } from "@prisma/client";
+import { PrismaClient, CsvMappingStatus, GroupMembership, CsvIdentityMapping, GroupMember } from "@prisma/client";
 import { MappingAction } from "shared";
 import { parseCsv } from "./csvParser";
 
@@ -99,9 +99,9 @@ export async function autoSuggestMappings(
     prisma.groupMember.findMany({ where: { groupId } }),
   ]);
 
-  const identityMap = new Map(existingIdentities.map((i) => [i.originalName, i]));
+  const identityMap = new Map(existingIdentities.map((i: CsvIdentityMapping & { approvedMember: GroupMember | null, suggestedMember: GroupMember | null }) => [i.originalName, i]));
 
-  return names.map((name) => {
+  return names.map((name: string) => {
     const normName = normalizeCsvName(name);
 
     // 1. Prior confirmed mapping
@@ -221,9 +221,9 @@ export async function getMappingStatus(groupId: string, jobId: string) {
     include: { approvedMember: true, suggestedMember: true },
   });
 
-  const identityMap = new Map(identities.map((i) => [i.originalName, i]));
+  const identityMap = new Map(identities.map((i: CsvIdentityMapping & { approvedMember: GroupMember | null, suggestedMember: GroupMember | null }) => [i.originalName, i]));
 
-  const participants: ParticipantMapping[] = participantNames.map((name) => {
+  const participants: ParticipantMapping[] = participantNames.map((name: string) => {
     const identity = identityMap.get(name);
     if (!identity) {
       return { csvName: name, status: CsvMappingStatus.PENDING, suggestion: null };
@@ -245,7 +245,7 @@ export async function getMappingStatus(groupId: string, jobId: string) {
     };
   });
 
-  const pendingCount = participants.filter((p) => p.status === CsvMappingStatus.PENDING).length;
+  const pendingCount = participants.filter((p: ParticipantMapping) => p.status === CsvMappingStatus.PENDING).length;
 
   return {
     jobId,
@@ -277,11 +277,11 @@ export async function getGroupMembers(groupId: string) {
     orderBy: { joinedAt: "asc" },
   });
 
-  return groupMembers.map((gm) => {
+  return groupMembers.map((gm: GroupMember & { user: { email: string } | null }) => {
     // A single user might have multiple historical memberships, 
     // find the most recent/active one
-    const userMemberships = gm.userId ? memberships.filter((m) => m.userId === gm.userId) : [];
-    const activeMembership = userMemberships.find(m => m.leftAt === null) || userMemberships[userMemberships.length - 1];
+    const userMemberships = gm.userId ? memberships.filter((m: GroupMembership) => m.userId === gm.userId) : [];
+    const activeMembership = userMemberships.find((m: GroupMembership) => m.leftAt === null) || userMemberships[userMemberships.length - 1];
     
     return {
       id: gm.id,
