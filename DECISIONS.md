@@ -338,4 +338,10 @@ omitted.
 
 **Why:** If an import contains 40 rows and commits 39 successfully but fails on the last row due to a database constraint or server error, a non-atomic commit would leave the database in a partially-imported corrupt state. Running inside a transaction ensures that the import is committed fully or aborted entirely with no side-effects.
 
+---
 
+## D16: Balance Engine and Debt Simplification
+
+**Decision:** The Balance Engine computes the net balance of every user by iterating over all `Expense`, `ExpenseSplit`, and `Settlement` records to compute a singular `netBalance`. Then, it applies a **Greedy Debt Simplification Algorithm** to generate settlement recommendations (who should pay whom to zero out).
+
+**Why:** Instead of tracking an ever-growing matrix of who-owes-whom on a per-expense basis (which becomes computationally heavy and requires high DB read/write volume), computing an aggregate net balance (positive = owed money, negative = owes money) is perfectly accurate. The greedy algorithm sorts creditors (positive balance) and debtors (negative balance) and matches the largest debts to the largest credits. This simplifies 10 micro-transactions between 5 people into a minimum set of payments, vastly improving UX.

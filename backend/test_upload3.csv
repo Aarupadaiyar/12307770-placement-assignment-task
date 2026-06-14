@@ -1,0 +1,6 @@
+date,description,amount,currency,paid_by,split_with,split_type,split_details,notes
+08-02-2026,Dinner at Marina Bites,3200,INR,Evaluator,Aisha;Rohan,EQUAL,,
+11-03-2026,Goa villa booking,540,USD,Aisha,Evaluator;Rohan,EQUAL,,foreign currency
+15-03-2026,Rohan paid Aisha back,5000,INR,Rohan,Aisha,,,settlement
+05-04-2026,Meera going away party,4500,INR,Priya,Aisha;Rohan;Priya;Meera,EQUAL,,Meera left March 31 but was at this party somehow? Wait, expense is April 5.
+16-04-2026,Welcome Sam lunch,2000,INR,Evaluator,Aisha;Rohan;Sam,EQUAL,,Sam joined April 15

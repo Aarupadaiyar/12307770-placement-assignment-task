@@ -8,6 +8,7 @@ import {
   getGroup,
   renameGroup,
   addGroupMember,
+  editGroupMember,
   endGroupMembership,
   GroupDetail,
   GroupMember,
@@ -35,9 +36,17 @@ export default function GroupDetailPage() {
   // Add member state
   const [addEmail, setAddEmail] = useState("");
   const [addJoinedAt, setAddJoinedAt] = useState("");
+  const [addLeftAt, setAddLeftAt] = useState("");
   const [addSubmitting, setAddSubmitting] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
+
+  // Edit membership state
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editJoinedAt, setEditJoinedAt] = useState("");
+  const [editLeftAt, setEditLeftAt] = useState("");
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   // End membership state
   const [endingUserId, setEndingUserId] = useState<string | null>(null);
@@ -95,15 +104,33 @@ export default function GroupDetailPage() {
     setAddSubmitting(true);
     try {
       const joinedAtIso = addJoinedAt ? new Date(addJoinedAt).toISOString() : undefined;
-      const res = await addGroupMember(groupId, addEmail.trim(), joinedAtIso);
+      const leftAtIso = addLeftAt ? new Date(addLeftAt).toISOString() : undefined;
+      const res = await addGroupMember(groupId, addEmail.trim(), joinedAtIso, leftAtIso);
       setAddSuccess(`${res.member.displayName} added successfully.`);
       setAddEmail("");
       setAddJoinedAt("");
+      setAddLeftAt("");
       await fetchGroup();
     } catch (err) {
       setAddError(err instanceof ApiError ? err.message : "Something went wrong");
     } finally {
       setAddSubmitting(false);
+    }
+  }
+
+  async function handleEditMembership(targetUserId: string) {
+    setEditError(null);
+    setEditSubmitting(true);
+    try {
+      const joinedAtIso = new Date(editJoinedAt).toISOString();
+      const leftAtIso = editLeftAt ? new Date(editLeftAt).toISOString() : undefined;
+      await editGroupMember(groupId, targetUserId, joinedAtIso, leftAtIso);
+      setEditingUserId(null);
+      await fetchGroup();
+    } catch (err) {
+      setEditError(err instanceof ApiError ? err.message : "Something went wrong");
+    } finally {
+      setEditSubmitting(false);
     }
   }
 
@@ -129,33 +156,101 @@ export default function GroupDetailPage() {
     return (
       <li className="py-3 border-b-2 border-dashed border-paper-border last:border-0">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-bold text-paper-text text-base">
-              👤 {member.displayName}
-            </span>
-            <span className="text-xs text-paper-text/60 font-mono">({member.email})</span>
-            {member.role === "ADMIN" && (
-              <span className="text-xs font-bold border border-paper-accent text-paper-accent bg-paper-accent/5 px-1.5 py-0.2 rounded rotate-[-2deg]">
-                ADMIN
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-paper-text text-base">
+                👤 {member.displayName}
               </span>
-            )}
-            {isCurrentUser && (
-              <span className="text-xs font-bold text-paper-blue">(you)</span>
-            )}
+              <span className="text-xs text-paper-text/60 font-mono">({member.email})</span>
+              {member.role === "ADMIN" && (
+                <span className="text-xs font-bold border border-paper-accent text-paper-accent bg-paper-accent/5 px-1.5 py-0.2 rounded rotate-[-2deg]">
+                  ADMIN
+                </span>
+              )}
+              {isCurrentUser && (
+                <span className="text-xs font-bold text-paper-blue">(you)</span>
+              )}
+            </div>
+            <div className="text-xs text-paper-text/60 font-mono mt-1">
+              <span>JOINED: {formatDate(member.joinedAt)}</span>
+              {member.leftAt && <span className="ml-3 correction-text">LEFT: {formatDate(member.leftAt)}</span>}
+            </div>
           </div>
-          {isAdmin && !isCurrentUser && !isBeingEnded && (
-            <button
-              onClick={() => {
-                setEndingUserId(member.userId);
-                setEndLeftAt(todayIso());
-                setEndError(null);
-              }}
-              className="text-xs font-bold text-paper-accent hover:underline border border-dashed border-paper-accent px-2 py-0.5 rounded transition-colors self-start sm:self-auto"
-            >
-              End Membership
-            </button>
+          {isAdmin && !isCurrentUser && !isBeingEnded && editingUserId !== member.userId && (
+            <div className="flex gap-2 self-start sm:self-auto">
+              <button
+                onClick={() => {
+                  setEditingUserId(member.userId);
+                  setEditJoinedAt(member.joinedAt ? member.joinedAt.split('T')[0] : todayIso());
+                  setEditLeftAt(member.leftAt ? member.leftAt.split('T')[0] : "");
+                  setEditError(null);
+                  setEndingUserId(null);
+                }}
+                className="text-xs font-bold text-paper-blue hover:underline border border-dashed border-paper-blue px-2 py-0.5 rounded transition-colors"
+              >
+                Edit Dates
+              </button>
+              <button
+                onClick={() => {
+                  setEndingUserId(member.userId);
+                  setEndLeftAt(todayIso());
+                  setEndError(null);
+                  setEditingUserId(null);
+                }}
+                className="text-xs font-bold text-paper-accent hover:underline border border-dashed border-paper-accent px-2 py-0.5 rounded transition-colors"
+              >
+                End Membership
+              </button>
+            </div>
           )}
         </div>
+
+        {editingUserId === member.userId && (
+          <div className="mt-3 border-2 border-paper-blue bg-paper-blue/5 p-4 rounded rotate-[-0.5deg]">
+            <p className="font-bold text-sm text-paper-blue mb-2">
+              ✏️ Edit Membership Dates for {member.displayName}
+            </p>
+            <div className="flex flex-col sm:flex-row items-end gap-3 flex-wrap">
+              <div>
+                <label className="block text-xs font-bold text-paper-text/85 mb-1 uppercase">Joined Date</label>
+                <input
+                  type="date"
+                  value={editJoinedAt}
+                  onChange={(e) => setEditJoinedAt(e.target.value)}
+                  className="px-2 py-1 text-xs border border-paper-border"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-paper-text/85 mb-1 uppercase">Departure Date</label>
+                <input
+                  type="date"
+                  value={editLeftAt}
+                  onChange={(e) => setEditLeftAt(e.target.value)}
+                  className="px-2 py-1 text-xs border border-paper-border"
+                />
+              </div>
+              <div className="flex gap-2 mt-2 sm:mt-0">
+                <button
+                  onClick={() => handleEditMembership(member.userId)}
+                  disabled={editSubmitting}
+                  className="px-3 py-1 text-xs font-bold bg-paper-blue text-white border-2 border-paper-border rounded"
+                >
+                  {editSubmitting ? "SAVING..." : "SAVE"}
+                </button>
+                <button
+                  onClick={() => { setEditingUserId(null); setEditError(null); }}
+                  disabled={editSubmitting}
+                  className="px-3 py-1 text-xs font-bold bg-paper-muted text-paper-text border-2 border-paper-border rounded"
+                >
+                  CANCEL
+                </button>
+              </div>
+            </div>
+            {editError && (
+              <p className="mt-2 text-xs font-bold text-paper-accent">ERROR: {editError}</p>
+            )}
+          </div>
+        )}
 
         {isBeingEnded && (
           <div className="mt-3 border-2 border-paper-accent bg-paper-accent/5 p-4 rounded rotate-[0.5deg]">
@@ -337,16 +432,7 @@ export default function GroupDetailPage() {
               {showPast && (
                 <ul className="mt-4 divide-y-2 divide-dashed divide-paper-border pt-2">
                   {group.pastMembers.map((m) => (
-                    <li key={m.membershipId} className="py-3 flex items-center justify-between flex-wrap gap-2 text-sm font-bold text-paper-text/85">
-                      <div>
-                        <span>👤 {m.displayName}</span>
-                        <span className="text-xs text-paper-text/50 font-mono ml-2">({m.email})</span>
-                      </div>
-                      <div className="text-right text-xs text-paper-text/60 font-mono">
-                        <div>JOINED: {formatDate(m.joinedAt)}</div>
-                        <div className="correction-text">LEFT: {formatDate(m.leftAt!)}</div>
-                      </div>
-                    </li>
+                    <MemberRow key={m.membershipId} member={m} isAdmin={isAdmin} />
                   ))}
                 </ul>
               )}
@@ -383,17 +469,31 @@ export default function GroupDetailPage() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-paper-text/80 mb-1">
-                    Joined On <span className="text-paper-text/40">(optional)</span>
-                  </label>
-                  <input
-                    type="date"
-                    value={addJoinedAt}
-                    onChange={(e) => setAddJoinedAt(e.target.value)}
-                    disabled={addSubmitting}
-                    className="w-full text-xs"
-                  />
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-paper-text/80 mb-1">
+                      Joined On <span className="text-paper-text/40">(optional)</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={addJoinedAt}
+                      onChange={(e) => setAddJoinedAt(e.target.value)}
+                      disabled={addSubmitting}
+                      className="w-full text-xs"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-paper-text/80 mb-1">
+                      Left On <span className="text-paper-text/40">(optional)</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={addLeftAt}
+                      onChange={(e) => setAddLeftAt(e.target.value)}
+                      disabled={addSubmitting}
+                      className="w-full text-xs"
+                    />
+                  </div>
                 </div>
 
                 {addError && (

@@ -64,6 +64,10 @@ export const addMemberSchema = z.object({
     .string()
     .datetime({ offset: true, message: "joinedAt must be a valid ISO 8601 date string" })
     .optional(),
+  leftAt: z
+    .string()
+    .datetime({ offset: true, message: "leftAt must be a valid ISO 8601 date string" })
+    .optional(),
 });
 
 /**
@@ -82,6 +86,21 @@ export const endMembershipSchema = z.object({
     .datetime({ offset: true, message: "leftAt must be a valid ISO 8601 date string" }),
 });
 
+/**
+ * PATCH /api/groups/:groupId/members/:userId
+ * Edit an existing membership (joinedAt and/or leftAt). Admin-only.
+ */
+export const editMemberSchema = z.object({
+  joinedAt: z
+    .string()
+    .datetime({ offset: true, message: "joinedAt must be a valid ISO 8601 date string" }),
+  leftAt: z
+    .string()
+    .datetime({ offset: true, message: "leftAt must be a valid ISO 8601 date string" })
+    .nullable()
+    .optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Inferred TypeScript types (used by the service layer)
 // ---------------------------------------------------------------------------
@@ -90,3 +109,4 @@ export type CreateGroupInput = z.infer<typeof createGroupSchema>;
 export type RenameGroupInput = z.infer<typeof renameGroupSchema>;
 export type AddMemberInput = z.infer<typeof addMemberSchema>;
 export type EndMembershipInput = z.infer<typeof endMembershipSchema>;
+export type EditMemberInput = z.infer<typeof editMemberSchema>;

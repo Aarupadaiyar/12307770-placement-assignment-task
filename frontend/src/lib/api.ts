@@ -15,7 +15,11 @@
 // automatically because of `credentials: "include"` here + `cors({
 // credentials: true })` on the backend (index.ts).
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+
+if (!API_BASE_URL) {
+  console.warn("NEXT_PUBLIC_API_URL is not defined! API requests will fail.");
+}
 
 export class ApiError extends Error {
   status: number;
@@ -121,11 +125,16 @@ export async function renameGroup(
 export async function addGroupMember(
   groupId: string,
   email: string,
-  joinedAt?: string
+  joinedAt?: string,
+  leftAt?: string
 ): Promise<{ member: GroupMember }> {
   return apiFetch(`/api/groups/${groupId}/members`, {
     method: "POST",
-    body: JSON.stringify({ email, ...(joinedAt ? { joinedAt } : {}) }),
+    body: JSON.stringify({
+      email,
+      ...(joinedAt ? { joinedAt } : {}),
+      ...(leftAt ? { leftAt } : {}),
+    }),
   });
 }
 
@@ -138,6 +147,19 @@ export async function endGroupMembership(
   return apiFetch(`/api/groups/${groupId}/members/${userId}/end`, {
     method: "PATCH",
     body: JSON.stringify({ leftAt }),
+  });
+}
+
+/** PATCH /api/groups/:groupId/members/:userId — edit a membership (admin only) */
+export async function editGroupMember(
+  groupId: string,
+  userId: string,
+  joinedAt: string,
+  leftAt?: string
+): Promise<{ membership: { id: string; joinedAt: string; leftAt: string | null } }> {
+  return apiFetch(`/api/groups/${groupId}/members/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ joinedAt, leftAt: leftAt || null }),
   });
 }
 

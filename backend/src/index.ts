@@ -28,6 +28,9 @@ import authRouter from "./routes/auth.routes";
 import groupRouter from "./routes/group.routes";
 import importRouter from "./routes/import.routes";
 import memberMappingRouter from "./routes/memberMapping.routes";
+import balanceRouter from "./routes/balance.routes";
+import expenseRouter from "./routes/expense.routes";
+import settlementRouter from "./routes/settlement.routes";
 
 const app = express();
 
@@ -58,7 +61,12 @@ app.use(cookieParser());
 app.get("/health", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
-    res.json({ status: "ok", db: "connected" });
+    res.json({
+      status: "ok",
+      db: "connected",
+      nodeEnv: process.env.NODE_ENV ?? "undefined",
+      deployVersion: "v2-cookie-fix",
+    });
   } catch (err) {
     res.status(500).json({ status: "error", db: "unreachable" });
   }
@@ -71,6 +79,9 @@ app.use("/api/auth", authRouter);
 app.use("/api/groups", groupRouter); // Module 3: Groups + Dynamic Membership
 app.use("/api/groups/:groupId/imports", importRouter);          // Module 5: CSV Import Engine
 app.use("/api/groups/:groupId/imports/:jobId/mapping", memberMappingRouter); // Member Mapping Workflow
+app.use("/api/groups/:groupId/balances", balanceRouter);
+app.use("/api/groups/:groupId/expenses", expenseRouter);
+app.use("/api/groups/:groupId/settlements", settlementRouter);
 
 
 // Module 4 (Expenses) will add: app.use("/api/expenses", expensesRouter);

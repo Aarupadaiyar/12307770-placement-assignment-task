@@ -37,6 +37,7 @@ import {
   renameGroupSchema,
   addMemberSchema,
   endMembershipSchema,
+  editMemberSchema,
 } from "../validation/group.validation";
 import {
   createGroup,
@@ -44,6 +45,7 @@ import {
   getGroupDetail,
   renameGroup,
   addMember,
+  editMember,
   endMembership,
   listMembers,
   GroupNotFoundError,
@@ -167,6 +169,7 @@ router.post("/:groupId/members", async (req, res) => {
       requesterId: req.userId!,
       email: parsed.data.email,
       joinedAt: parsed.data.joinedAt ? new Date(parsed.data.joinedAt) : undefined,
+      leftAt: parsed.data.leftAt ? new Date(parsed.data.leftAt) : undefined,
     });
     return res.status(201).json({ member });
   } catch (err) {
@@ -229,6 +232,38 @@ router.patch("/:groupId/members/:userId/end", async (req, res) => {
       return res.status(403).json({ error: err.message });
     }
     console.error("endMembership error:", err);
+    return res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
+// PATCH /api/groups/:groupId/members/:userId
+// Edit a user's membership (joinedAt/leftAt). Admin-only.
+router.patch("/:groupId/members/:userId", async (req, res) => {
+  const parsed = editMemberSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() });
+  }
+
+  try {
+    const membership = await editMember({
+      groupId: req.params.groupId,
+      targetUserId: req.params.userId,
+      requesterId: req.userId!,
+      joinedAt: new Date(parsed.data.joinedAt),
+      leftAt: parsed.data.leftAt ? new Date(parsed.data.leftAt) : null,
+    });
+    return res.json({ membership });
+  } catch (err) {
+    if (err instanceof GroupNotFoundError || err instanceof UserNotFoundError || err instanceof MembershipNotFoundError) {
+      return res.status(404).json({ error: (err as Error).message });
+    }
+    if (err instanceof NotAMemberError || err instanceof NotAnAdminError) {
+      return res.status(403).json({ error: (err as Error).message });
+    }
+    if (err instanceof Error && err.message.includes("joinedAt must be before leftAt")) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error("editMember error:", err);
     return res.status(500).json({ error: "Something went wrong" });
   }
 });

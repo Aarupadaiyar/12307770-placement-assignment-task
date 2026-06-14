@@ -15,6 +15,9 @@ Each row below maps to an `AnomalyType` enum value (see `shared/index.ts`).
 single-phase row-by-row review (see DECISIONS.md, D6), the user must still
 accept/edit/reject every proposal — nothing here is auto-applied silently.
 
+### Global Rounding Policy
+When an expense is split and the math results in a fraction of a cent (e.g. dividing 100 by 3 gives 33.33 with a 0.01 remainder), the application enforces a **First-Participant Absorption Policy**. The remainder is sequentially distributed in 0.01 increments to the first participants in the split array until the ledger perfectly zeroes out. This guarantees that `SUM(ExpenseSplit.amount) === Expense.amountInr` in all cases.
+
 | # | AnomalyType | CSV row(s) | Detection rule | Proposed policy |
 |---|---|---|---|---|
 | 1 | `DUPLICATE_SUSPECTED` | "Dinner at Marina Bites" (Dev, 3200, 08-02) vs "dinner - marina bites" (Dev, 3200, 08-02) | Same date + payer + amount, similar description (case/punctuation-insensitive match) | Flag both rows as a suspected duplicate pair. User picks: import one, import both (if legitimately two separate dinners), or merge. |

@@ -3,6 +3,7 @@
 import { PrismaClient, CsvMappingStatus, GroupMembership, CsvIdentityMapping, GroupMember } from "@prisma/client";
 import { MappingAction } from "shared";
 import { parseCsv } from "./csvParser";
+import { logAuditAction } from "./audit.service";
 
 const prisma = new PrismaClient();
 
@@ -193,6 +194,7 @@ export async function upsertCsvIdentitiesForJob(
           originalName: s.csvName,
           normalizedName: normalizeCsvName(s.csvName),
           suggestedMemberId: s.suggestion?.groupMemberId ?? null,
+          approvedMemberId: s.suggestion ? s.suggestion.groupMemberId : null,
           decision: s.suggestion ? CsvMappingStatus.AUTO_MAPPED : CsvMappingStatus.PENDING,
           confidence: s.suggestion?.confidence ?? 0,
         },
@@ -374,6 +376,14 @@ export async function submitMappingDecisions(
         },
       });
     }
+
+    await logAuditAction({
+      userId: _adminUserId,
+      action: "UPDATE_MEMBER_MAPPING",
+      entityType: "CsvIdentityMapping",
+      entityId: `${groupId}_${csvName}`,
+      afterData: { action, memberId, csvName },
+    });
   }
 
   // Check whether any participants for this job are still PENDING

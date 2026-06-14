@@ -12,19 +12,31 @@ import {
   SplitType,
   CsvMappingStatus,
 } from "shared";
+import { logAuditAction } from "./audit.service";
 
 const prisma = new PrismaClient();
 
-// Hardcoded fallback exchange rates around March 2026 for USD -> INR
-const MOCK_FX_FALLBACK: Record<string, number> = {
-  "2026-03": 83.45,
-  "2026-04": 83.62,
-  "default": 83.50,
-};
+const fxCache: Record<string, number> = {};
 
-function getMockFxRate(date: Date): number {
-  const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-  return MOCK_FX_FALLBACK[monthKey] || MOCK_FX_FALLBACK["default"];
+async function getFxRate(date: Date, fromCur: string, toCur: string): Promise<number> {
+  const dateStr = date.toISOString().split("T")[0];
+  const cacheKey = `${dateStr}-${fromCur}-${toCur}`;
+  if (fxCache[cacheKey]) return fxCache[cacheKey];
+
+  const baseUrl = process.env.FX_API_BASE_URL || "https://api.frankfurter.app";
+  try {
+    const res = await fetch(`${baseUrl}/${dateStr}?from=${fromCur}&to=${toCur}`);
+    if (!res.ok) throw new Error("FX API returned " + res.status);
+    const data = await res.json() as any;
+    if (data.rates && data.rates[toCur]) {
+      fxCache[cacheKey] = data.rates[toCur];
+      return data.rates[toCur];
+    }
+  } catch (err) {
+    console.error("Failed to fetch FX rate:", err);
+    throw new Error(`Could not fetch FX rate for ${fromCur} to ${toCur} on ${dateStr}`);
+  }
+  throw new Error(`Missing FX rate for ${fromCur} to ${toCur} on ${dateStr}`);
 }
 
 /**
@@ -212,6 +224,14 @@ export async function submitDecision(
   // Update job report stats
   await updateReportStats(jobId);
 
+  await logAuditAction({
+    userId,
+    action: "SUBMIT_DECISION",
+    entityType: "ImportRow",
+    entityId: rowId,
+    afterData: { resolution, details: details ?? null },
+  });
+
   // Check if all rows are resolved
   const pendingRows = await prisma.importRow.count({
     where: {
@@ -381,9 +401,9 @@ export async function commitImportJob(jobId: string, userId: string) {
         let fxRateToInr: Decimal | null = null;
         let fxRateDate: Date | null = null;
 
-        if (currency === Currency.USD) {
-          const rate = getMockFxRate(date);
-          fxRateToInr = new Decimal(rate);
+        if (currency !== Currency.INR) {
+          const rate = await getFxRate(date, currency, Currency.INR);
+          fxRateToInr = new Prisma.Decimal(rate);
           amountInr = parsedAmount.mul(fxRateToInr);
           fxRateDate = date;
         }
@@ -548,6 +568,14 @@ export async function commitImportJob(jobId: string, userId: string) {
         status: ImportJobStatus.COMMITTED,
         committedAt: new Date(),
       },
+    });
+
+    await logAuditAction({
+      userId: userId,
+      action: "COMMIT_IMPORT",
+      entityType: "ImportJob",
+      entityId: jobId,
+      afterData: { totalRows: job.totalRows },
     });
 
     // Fetch final report

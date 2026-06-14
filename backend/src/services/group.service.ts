@@ -43,6 +43,7 @@
 import { prisma } from "../lib/prisma";
 import { isActiveMember, getActiveMembership } from "../lib/membership";
 import { PrismaClient, GroupRole, Prisma, GroupMembership, Group, User } from "@prisma/client";
+import { logAuditAction } from "./audit.service";
 
 // ---------------------------------------------------------------------------
 // Custom error classes (service layer only — routes catch these)
@@ -134,13 +135,23 @@ export async function createGroup(params: { name: string; creatorId: string }) {
       data: { name: params.name },
     });
 
-    await tx.groupMembership.create({
+    const membership = await tx.groupMembership.create({
       data: {
         groupId: group.id,
         userId: params.creatorId,
         role: GroupRole.ADMIN,
         joinedAt: new Date(),
       },
+    });
+
+    const user = await tx.user.findUnique({ where: { id: params.creatorId } });
+    await tx.groupMember.create({
+      data: {
+        groupId: group.id,
+        userId: params.creatorId,
+        displayName: user?.displayName || "Admin",
+        hasAccount: true,
+      }
     });
 
     return group;
@@ -295,8 +306,13 @@ export async function addMember(params: {
   requesterId: string;
   email: string;
   joinedAt?: Date;
+  leftAt?: Date;
 }) {
-  const { groupId, requesterId, email, joinedAt = new Date() } = params;
+  const { groupId, requesterId, email, joinedAt = new Date(), leftAt } = params;
+
+  if (leftAt && joinedAt > leftAt) {
+    throw new Error("joinedAt must be before leftAt");
+  }
 
   // Guard: requester must be an admin
   await requireAdmin(requesterId, groupId);
@@ -318,10 +334,33 @@ export async function addMember(params: {
       userId: targetUser.id,
       role: GroupRole.MEMBER, // new members always start as MEMBER; promote separately
       joinedAt,
+      leftAt,
     },
     include: {
       user: { select: { id: true, displayName: true, email: true } },
     },
+  });
+
+  await prisma.groupMember.upsert({
+    where: { groupId_userId: { groupId: groupId, userId: targetUser.id } },
+    create: {
+      groupId: groupId,
+      userId: targetUser.id,
+      displayName: targetUser.displayName,
+      hasAccount: true,
+    },
+    update: {
+      displayName: targetUser.displayName,
+      hasAccount: true,
+    }
+  });
+
+  await logAuditAction({
+    userId: requesterId,
+    action: "ADD_MEMBER",
+    entityType: "GroupMembership",
+    entityId: membership.id,
+    afterData: { userId: targetUser.id, groupId, joinedAt, leftAt },
   });
 
   return {
@@ -408,6 +447,63 @@ export async function endMembership(params: {
       leftAt: true,
     },
   });
+}
+
+/**
+ * Edit an existing membership's dates. Admin-only.
+ */
+export async function editMember(params: {
+  groupId: string;
+  requesterId: string;
+  targetUserId: string;
+  joinedAt: Date;
+  leftAt: Date | null;
+}) {
+  const { groupId, requesterId, targetUserId, joinedAt, leftAt } = params;
+
+  if (leftAt && joinedAt > leftAt) {
+    throw new Error("joinedAt must be before leftAt");
+  }
+
+  // Guard: requester must be an admin
+  await requireAdmin(requesterId, groupId);
+
+  // Find the most relevant membership for this user (the one with leftAt null, or the latest one)
+  const memberships = await prisma.groupMembership.findMany({
+    where: { userId: targetUserId, groupId },
+    orderBy: { joinedAt: "desc" },
+  });
+
+  if (memberships.length === 0) {
+    throw new MembershipNotFoundError();
+  }
+
+  // We'll update the most recently joined membership
+  const targetMembership = memberships.find((m: any) => m.leftAt === null) || memberships[0];
+
+  const updated = await prisma.groupMembership.update({
+    where: { id: targetMembership.id },
+    data: { joinedAt, leftAt },
+    select: {
+      id: true,
+      userId: true,
+      groupId: true,
+      role: true,
+      joinedAt: true,
+      leftAt: true,
+    },
+  });
+
+  await logAuditAction({
+    userId: requesterId,
+    action: "EDIT_MEMBER",
+    entityType: "GroupMembership",
+    entityId: targetMembership.id,
+    beforeData: { joinedAt: targetMembership.joinedAt, leftAt: targetMembership.leftAt },
+    afterData: { joinedAt, leftAt },
+  });
+
+  return updated;
 }
 
 /**

@@ -213,25 +213,25 @@ export async function detectAnomalies(
       suggestedAction: "ASSIGN_TO_GROUP_ADMIN",
     });
   } else {
-    // Attempt alias/user match in database
-    const resolvedPayer = await resolveUserByAliasOrEmail(paidBy);
-    if (!resolvedPayer) {
+    // Look up via CsvIdentityMapping
+    const mappedMember = await resolveMappedMember(groupId, paidBy);
+    if (!mappedMember) {
       anomalies.push({
         anomalyType: AnomalyType.UNKNOWN_MEMBER,
         severity: AnomalySeverity.ERROR,
-        description: `Payer "${paidBy}" cannot be matched to any registered flatmate.`,
-        suggestedAction: "RESOLVE_USER_ALIAS or SKIP",
+        description: `Payer "${paidBy}" could not be mapped to any member.`,
+        suggestedAction: "RESOLVE_USER_MAPPING or SKIP",
       });
     } else {
-      payerUser = resolvedPayer;
+      payerUser = mappedMember.user;
       // Check membership dates
       if (parsedDate) {
-        const membership = await checkMembershipStatus(groupId, payerUser.id, parsedDate);
+        const membership = await checkMembershipStatus(groupId, mappedMember, parsedDate);
         if (!membership.exists) {
           anomalies.push({
             anomalyType: AnomalyType.UNKNOWN_MEMBER,
             severity: AnomalySeverity.ERROR,
-            description: `Payer "${payerUser.displayName}" is not a member of the group.`,
+            description: `Payer "${mappedMember.displayName}" is not a member of the group.`,
             suggestedAction: "ADD_MEMBER_TO_GROUP",
           });
         } else {
@@ -239,7 +239,7 @@ export async function detectAnomalies(
             anomalies.push({
               anomalyType: AnomalyType.EXPENSE_BEFORE_MEMBER_JOINED,
               severity: AnomalySeverity.WARNING,
-              description: `Payer "${payerUser.displayName}" paid before they joined (Joined: ${membership.joinedAt?.toLocaleDateString()}).`,
+              description: `Payer "${mappedMember.displayName}" paid before they joined (Joined: ${membership.joinedAt?.toLocaleDateString()}).`,
               suggestedAction: "BACKDATE_JOIN_DATE or REASSIGN_PAYER",
             });
           }
@@ -247,7 +247,7 @@ export async function detectAnomalies(
             anomalies.push({
               anomalyType: AnomalyType.EXPENSE_AFTER_MEMBER_LEFT,
               severity: AnomalySeverity.WARNING,
-              description: `Payer "${payerUser.displayName}" paid after they left the flat (Left: ${membership.leftAt?.toLocaleDateString()}).`,
+              description: `Payer "${mappedMember.displayName}" paid after they left the flat (Left: ${membership.leftAt?.toLocaleDateString()}).`,
               suggestedAction: "EXTEND_MEMBERSHIP_EXIT_DATE or REASSIGN_PAYER",
             });
           }
@@ -340,21 +340,21 @@ export async function detectAnomalies(
       } else {
         // Validate each participant
         for (const p of participants) {
-          const resolvedPart = await resolveUserByAliasOrEmail(p);
-          if (!resolvedPart) {
+          const mappedPart = await resolveMappedMember(groupId, p);
+          if (!mappedPart) {
             anomalies.push({
               anomalyType: AnomalyType.UNKNOWN_MEMBER,
               severity: AnomalySeverity.ERROR,
-              description: `Split participant "${p}" cannot be matched to any registered flatmate.`,
-              suggestedAction: "RESOLVE_USER_ALIAS or REMOVE_FROM_SPLIT",
+              description: `Split participant "${p}" could not be mapped to any member.`,
+              suggestedAction: "RESOLVE_USER_MAPPING or REMOVE_FROM_SPLIT",
             });
           } else if (parsedDate) {
-            const membership = await checkMembershipStatus(groupId, resolvedPart.id, parsedDate);
+            const membership = await checkMembershipStatus(groupId, mappedPart, parsedDate);
             if (!membership.exists) {
               anomalies.push({
                 anomalyType: AnomalyType.INVALID_PARTICIPANT_LIST,
                 severity: AnomalySeverity.ERROR,
-                description: `Participant "${resolvedPart.displayName}" is not a member of the group.`,
+                description: `Participant "${mappedPart.displayName}" is not an active member.`,
                 suggestedAction: "EXCLUDE_PARTICIPANT_FROM_SPLIT",
               });
             } else {
@@ -362,7 +362,7 @@ export async function detectAnomalies(
                 anomalies.push({
                   anomalyType: AnomalyType.EXPENSE_BEFORE_MEMBER_JOINED,
                   severity: AnomalySeverity.WARNING,
-                  description: `Participant "${resolvedPart.displayName}" split before joining (Joined: ${membership.joinedAt?.toLocaleDateString()}).`,
+                  description: `Participant "${mappedPart.displayName}" split before joining (Joined: ${membership.joinedAt?.toLocaleDateString()}).`,
                   suggestedAction: "EXCLUDE_PARTICIPANT or BACKDATE_JOIN",
                 });
               }
@@ -370,7 +370,7 @@ export async function detectAnomalies(
                 anomalies.push({
                   anomalyType: AnomalyType.EXPENSE_AFTER_MEMBER_LEFT,
                   severity: AnomalySeverity.WARNING,
-                  description: `Participant "${resolvedPart.displayName}" split after leaving (Left: ${membership.leftAt?.toLocaleDateString()}).`,
+                  description: `Participant "${mappedPart.displayName}" split after leaving (Left: ${membership.leftAt?.toLocaleDateString()}).`,
                   suggestedAction: "EXCLUDE_PARTICIPANT or EXTEND_EXIT",
                 });
               }
@@ -498,37 +498,27 @@ export async function detectAnomalies(
 }
 
 /**
- * Resolves a raw name/email string from CSV to a database User.
+ * Resolves a raw name/email string from CSV to a database GroupMember using mapping.
  */
-async function resolveUserByAliasOrEmail(identifier: string) {
-  const normalized = identifier.trim().toLowerCase();
-  
-  // Direct email match
-  const userByEmail = await prisma.user.findFirst({
-    where: { email: { equals: normalized, mode: "insensitive" } },
+async function resolveMappedMember(groupId: string, csvName: string) {
+  const mapping = await prisma.csvIdentityMapping.findUnique({
+    where: { groupId_originalName: { groupId, originalName: csvName.trim() } },
+    include: { approvedMember: { include: { user: true } } },
   });
-  if (userByEmail) return userByEmail;
-
-  // DisplayName match
-  const userByDisplay = await prisma.user.findFirst({
-    where: { displayName: { equals: identifier.trim(), mode: "insensitive" } },
-  });
-  if (userByDisplay) return userByDisplay;
-
-  // Alias lookup
-  const alias = await prisma.userAlias.findFirst({
-    where: { rawValue: { equals: identifier.trim(), mode: "insensitive" } },
-    include: { user: true },
-  });
-  if (alias) return alias.user;
-
+  if (mapping?.approvedMember) return mapping.approvedMember;
   return null;
 }
 
 /**
- * Checks if a user is/was a member of the group on a specific date.
+ * Checks if a mapped member is/was a member of the group on a specific date.
  */
-async function checkMembershipStatus(groupId: string, userId: string, date: Date) {
+async function checkMembershipStatus(groupId: string, mappedMember: any, date: Date) {
+  if (!mappedMember.userId) {
+    // Placeholders have no specific join/leave dates, so they are always valid
+    return { exists: true };
+  }
+
+  const userId = mappedMember.userId;
   const memberships = await prisma.groupMembership.findMany({
     where: { groupId, userId },
   });
