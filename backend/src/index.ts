@@ -31,12 +31,25 @@ import memberMappingRouter from "./routes/memberMapping.routes";
 
 const app = express();
 
-app.use(
-  cors({
-    origin: process.env.FRONTEND_ORIGIN ?? "http://localhost:3000",
-    credentials: true, // required so the browser sends the JWT httpOnly cookie
-  })
-);
+const allowedOrigins = process.env.FRONTEND_ORIGIN
+  ? process.env.FRONTEND_ORIGIN.split(",").map((o) => o.trim().replace(/\/$/, ""))
+  : ["http://localhost:3000"];
+
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // Allow requests with no origin (like curl)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS policy violation: Origin not allowed"));
+    }
+  },
+  credentials: true, // required so the browser sends the JWT httpOnly cookie
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());
 
