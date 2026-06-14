@@ -1,8 +1,12 @@
 import { Router } from "express";
 import { createSettlement, deleteSettlement } from "../services/settlement.service";
 import { z } from "zod";
+import { requireAuth } from "../middleware/auth.middleware";
+import { requireGroupMembership, requireGroupAdmin } from "./import.routes";
 
 const router = Router({ mergeParams: true });
+router.use(requireAuth);
+router.use(requireGroupMembership);
 
 const createSettlementSchema = z.object({
   fromUserId: z.string().cuid(),
@@ -13,7 +17,7 @@ const createSettlementSchema = z.object({
 });
 
 // POST /api/groups/:groupId/settlements
-router.post("/", async (req: any, res: any) => {
+router.post("/", requireGroupAdmin, async (req: any, res: any) => {
   try {
     const { groupId } = req.params;
     const parsed = createSettlementSchema.safeParse(req.body);
@@ -34,7 +38,7 @@ router.post("/", async (req: any, res: any) => {
 });
 
 // DELETE /api/groups/:groupId/settlements/:id
-router.delete("/:id", async (req: any, res: any) => {
+router.delete("/:id", requireGroupAdmin, async (req: any, res: any) => {
   try {
     const { groupId, id } = req.params;
     await deleteSettlement(id, groupId);

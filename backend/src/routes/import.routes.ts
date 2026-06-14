@@ -18,7 +18,7 @@ const router = Router({ mergeParams: true });
 router.use(requireAuth);
 
 // Middleware to check if the user is an active member of the group
-async function requireGroupMembership(req: any, res: any, next: any) {
+export async function requireGroupMembership(req: any, res: any, next: any) {
   const { groupId } = req.params;
   const userId = req.userId!;
 
@@ -44,7 +44,7 @@ async function requireGroupMembership(req: any, res: any, next: any) {
 }
 
 // Middleware to check if the user is an admin of the group
-function requireGroupAdmin(req: any, res: any, next: any) {
+export function requireGroupAdmin(req: any, res: any, next: any) {
   if (req.groupRole !== "ADMIN") {
     return res.status(403).json({ error: "Access denied: Administrator permissions required." });
   }
