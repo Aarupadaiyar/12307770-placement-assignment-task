@@ -1,0 +1,584 @@
+// backend/prisma/schema.prisma
+//
+// =============================================================================
+// WHY THIS FILE EXISTS
+// =============================================================================
+// This is the single source of truth for the database structure. Every table,
+// column, relationship, and constraint the app uses is defined here. Prisma
+// generates a type-safe client from this file, so the TypeScript code and the
+// database can never silently drift apart — if you change a model here and
+// forget to update code that uses it, the build fails (not a runtime surprise).
+//
+// =============================================================================
+// ENTITY OVERVIEW (read this before the live session)
+// =============================================================================
+// User            - a person who can log in (Aisha, Rohan, Priya, Meera, Dev, Sam...)
+// Group           - a "flat" / shared expense group (e.g. "Flat 4B")
+// GroupMembership - join table between User and Group, WITH joinedAt/leftAt dates.
+//                   This is what makes membership "dynamic" (Sam joins mid-April,
+//                   Meera leaves end of March) instead of a static many-to-many.
+// Expense         - one bill (e.g. "March rent", paid by Aisha, 48000 INR)
+// ExpenseSplit    - one row PER PARTICIPANT per expense. If 4 people split an
+//                   expense, there are 4 ExpenseSplit rows. This is what lets
+//                   us answer "exactly which expenses make up the ₹2,300 Rohan
+//                   owes" (Rohan's explicit requirement) — we can always list
+//                   every ExpenseSplit row belonging to Rohan.
+// Settlement      - a direct payment from one user to another that SETTLES a
+//                   debt (e.g. "Rohan paid Aisha back 5000"). Deliberately a
+//                   SEPARATE table from Expense — settlements are not expenses,
+//                   they don't get split, they just move balance from A to B.
+//                   (This directly addresses the CSV row where a settlement was
+//                   wrongly logged as an expense.)
+// AuditLog        - append-only log of who changed what and when (Module 8,
+//                   table defined now so we don't need a later migration).
+// ImportBatch /
+// ImportStagingRow - staging area for CSV imports (Module 5). Raw rows land
+//                   here first; nothing touches Expense/Settlement until a
+//                   human approves each flagged row and clicks "Commit Import".
+//
+// =============================================================================
+// KEY RELATIONSHIP DECISIONS (and why — for the live session)
+// =============================================================================
+// 1. GroupMembership has joinedAt + leftAt (nullable). A user can have MULTIPLE
+//    GroupMembership rows for the same group (left and rejoined later) — full
+//    history is preserved. "Is this user active in this group on date X?" is
+//    answered by: does a GroupMembership row exist where joinedAt <= X AND
+//    (leftAt IS NULL OR leftAt >= X)?
+//
+// 2. ExpenseSplit.userId is a PLAIN foreign key to User — there is NO database
+//    constraint that the user must have been an active GroupMembership on the
+//    expense date. That check is a BUSINESS RULE enforced in application code
+//    (in the expense-creation and import services), not in the schema. This
+//    was a deliberate choice: a DB constraint here would mean every membership
+//    rule change requires a migration. Keeping it in code means it's one
+//    function we can point to and modify live.
+//
+// 3. Settlement is NOT a subtype of Expense. It has its own table with just
+//    fromUserId, toUserId, amount, currency, date. This makes the balance
+//    engine's job simple: balances come from summing ExpenseSplit "owed"
+//    amounts minus "paid" amounts, then NETTING OFF Settlements separately.
+//    Two clearly separate sources of truth, never conflated.
+//
+// 4. Expense stores BOTH the original currency/amount AND the converted INR
+//    amount + the FX rate + rate date used (fxRateToInr, fxRateDate). This is
+//    the FX snapshot decision — balances always use fxRateToInr * amount,
+//    never a live lookup, so balances are reproducible even if the live rate
+//    changes later.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// ENUMS
+// -----------------------------------------------------------------------------
+// These mirror shared/index.ts EXACTLY. If you add a value here, add it there
+// too (see the comment in shared/index.ts on why this isn't auto-generated).
+
+enum SplitType {
+  EQUAL
+  PERCENTAGE
+  SHARE
+  UNEQUAL
+}
+
+enum Currency {
+  INR
+  USD
+}
+
+enum GroupRole {
+  ADMIN
+  MEMBER
+}
+
+// Used by ImportStagingRow to record what kind of problem was detected.
+enum AnomalyType {
+  DUPLICATE_EXPENSE
+  NEAR_DUPLICATE_EXPENSE
+  NEGATIVE_AMOUNT
+  MISSING_PAYER
+  INVALID_AMOUNT
+  INVALID_DATE
+  UNKNOWN_MEMBER
+  EXPENSE_BEFORE_MEMBER_JOINED
+  EXPENSE_AFTER_MEMBER_LEFT
+  SETTLEMENT_LOGGED_AS_EXPENSE
+  CURRENCY_MISMATCH
+  USD_CONVERSION_REQUIRED
+  SPLIT_MISMATCH
+  TOTAL_SPLIT_NOT_EQUAL_TO_AMOUNT
+  UNKNOWN_SPLIT_TYPE
+  MISSING_CATEGORY
+  INVALID_PARTICIPANT_LIST
+}
+
+enum AnomalySeverity {
+  INFO
+  WARNING
+  ERROR
+}
+
+enum ImportJobStatus {
+  PROCESSING
+  AWAITING_MAPPING
+  IN_REVIEW
+  READY
+  COMMITTED
+  FAILED
+}
+
+enum ImportRowStatus {
+  PENDING
+  CLEAN
+  RESOLVED
+  COMMITTED
+  EXCLUDED
+}
+
+enum AnomalyResolution {
+  ACCEPT_SUGGESTED
+  EDIT_AND_ACCEPT
+  EXCLUDE_ROW
+  MARK_AS_DUPLICATE_OF
+}
+
+// Status of a single CSV name → GroupMember mapping decision.
+enum CsvMappingStatus {
+  PENDING     // not yet mapped by admin
+  MAPPED      // manually mapped by admin
+  AUTO_MAPPED // matched automatically with high confidence
+  IGNORED     // admin chose to ignore this name
+}
+
+// -----------------------------------------------------------------------------
+// USER
+// -----------------------------------------------------------------------------
+// A person who can log in. passwordHash is set by Module 2 (Auth).
+//
+// displayName is the canonical name (e.g. "Priya"). The CSV contains messy
+// variants ("priya", "Priya S") — these are resolved to this canonical user
+// via UserAlias (see below) during import, NOT by adding more columns here.
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  displayName  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships GroupMembership[]
+
+  // Expenses this user PAID FOR (the bill was in their name)
+  expensesPaid Expense[] @relation("ExpensePaidBy")
+
+  // Rows in ExpenseSplit where this user owes a share of an expense
+  splits ExpenseSplit[]
+
+  // Settlements where this user is the PAYER (sent money)
+  settlementsSent Settlement[] @relation("SettlementFrom")
+
+  // Settlements where this user is the RECEIVER (received money)
+  settlementsReceived Settlement[] @relation("SettlementTo")
+
+  // Alias strings from CSV imports that map to this user
+  // (e.g. "priya", "Priya S", "rohan " all map to one User)
+  aliases UserAlias[]
+
+  auditLogs AuditLog[]
+
+  // GroupMember entries where this registered user is the underlying identity
+  groupMembers GroupMember[]
+
+  @@map("users")
+}
+
+// Maps a raw string found in a CSV (any casing/whitespace/suffix variant) to
+// a canonical User. Built once during import resolution (Module 5) and reused
+// for future imports from the same source.
+//
+// WHY A SEPARATE TABLE instead of just trimming/lowercasing names at import
+// time: "Priya S" is not a trim/case issue — it's a genuinely different
+// string that a human had to confirm maps to "Priya". Storing the mapping
+// means we never ask the user to resolve "Priya S" -> Priya twice, and we
+// have an explicit, inspectable record of every alias decision ever made.
+model UserAlias {
+  id        String @id @default(cuid())
+  rawValue  String // exact string as it appeared in the CSV, e.g. "Priya S"
+  userId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  // The same raw string should not be mapped to two different users.
+  @@unique([rawValue])
+  @@map("user_aliases")
+}
+
+// -----------------------------------------------------------------------------
+// GROUP + GROUP MEMBERSHIP
+// -----------------------------------------------------------------------------
+
+model Group {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships  GroupMembership[]
+  expenses     Expense[]
+  settlements  Settlement[]
+  importJobs   ImportJob[]
+
+  // Member Mapping Workflow
+  groupMembers          GroupMember[]
+  csvIdentityMappings   CsvIdentityMapping[]
+
+  @@map("groups")
+}
+
+// -----------------------------------------------------------------------------
+// MEMBER MAPPING WORKFLOW
+// -----------------------------------------------------------------------------
+
+// GroupMember is a unified participant identity for any person who appears in
+// a group's expense history, whether or not they have a registered account.
+//
+// WHY SEPARATE FROM GroupMembership:
+//   GroupMembership requires a real userId (FK to User). Placeholders have no
+//   account, so they cannot have a GroupMembership row. GroupMember fills this
+//   gap: every person who has ever been named in a CSV import gets exactly one
+//   GroupMember row per group. When they register later, userId is back-filled.
+//
+// ExpenseSplit now references GroupMember (via groupMemberId) rather than User
+// directly, allowing placeholder participants to own split rows.
+model GroupMember {
+  id            String   @id @default(cuid())
+  groupId       String
+  userId        String?  // null for placeholder members (no registered account)
+  displayName   String   // canonical name shown in the app UI
+  hasAccount    Boolean  @default(false)  // true once userId is set
+  isPlaceholder Boolean  @default(false)  // true for members created via CSV import
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  group             Group         @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user              User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  suggestedMappings CsvIdentityMapping[] @relation("SuggestedMapping")
+  approvedMappings  CsvIdentityMapping[] @relation("ApprovedMapping")
+  expenseSplits ExpenseSplit[]
+
+  // One GroupMember per real user per group (placeholders have null userId so
+  // this unique index doesn't block multiple placeholders in the same group).
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@map("group_members")
+}
+
+// Stores the admin-confirmed mapping from a raw CSV name string to a
+// GroupMember, scoped per group. This is the "memory" that makes subsequent
+// imports auto-resolve without showing the mapping screen again.
+model CsvIdentityMapping {
+  id                String           @id @default(cuid())
+  groupId           String
+  originalName      String           // exact raw string as it appeared in the CSV
+  normalizedName    String           // cleaned version for matching
+  suggestedMemberId String?          // suggested target
+  confidence        Float            @default(0) // match score 0-100
+  approvedMemberId  String?          // resolved target (null while pending)
+  decision          CsvMappingStatus @default(PENDING) // e.g. "MAPPED", "IGNORED", "PLACEHOLDER", "PENDING"
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  group           Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  suggestedMember GroupMember? @relation("SuggestedMapping", fields: [suggestedMemberId], references: [id], onDelete: SetNull)
+  approvedMember  GroupMember? @relation("ApprovedMapping", fields: [approvedMemberId], references: [id], onDelete: SetNull)
+
+  // One mapping per CSV name per group
+  @@unique([groupId, originalName])
+  @@index([groupId])
+  @@map("csv_identity_mappings")
+}
+
+// A single "stint" of membership for a user in a group. A user can have
+// multiple rows for the same group (e.g. left and rejoined) — full history.
+//
+// "Is User X active in Group Y on Date D?" =
+//   EXISTS GroupMembership WHERE userId=X AND groupId=Y
+//     AND joinedAt <= D AND (leftAt IS NULL OR leftAt >= D)
+//
+// This single query is the basis for:
+//  - Sam's complaint ("why would March electricity affect my balance" —
+//    because Sam's joinedAt is in April, the balance engine excludes him
+//    from any expense dated before that)
+//  - Meera leaving end of March — her leftAt is set, so expenses dated
+//    in April correctly exclude her UNLESS the importer flags that she's
+//    still listed in split_with (anomaly #14 from SCOPE.md)
+model GroupMembership {
+  id       String    @id @default(cuid())
+  userId   String
+  groupId  String
+  role     GroupRole @default(MEMBER)
+  joinedAt DateTime
+  leftAt   DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([userId, groupId])
+  @@index([groupId])
+  @@map("group_memberships")
+}
+
+// -----------------------------------------------------------------------------
+// EXPENSE + EXPENSE SPLIT
+// -----------------------------------------------------------------------------
+
+// One bill. The "amount"/"currency" fields are the ORIGINAL values as entered
+// (or as corrected during import, e.g. "1,200" -> 1200.00). For non-INR
+// expenses, amountInr/fxRateToInr/fxRateDate record the converted snapshot
+// used by the balance engine — this is the "fetch live, snapshot it" decision.
+model Expense {
+  id          String    @id @default(cuid())
+  groupId     String
+  description String
+  date        DateTime  // the date the expense occurred (NOT createdAt)
+  amount      Decimal   @db.Decimal(12, 2) // original amount, in `currency`
+  currency    Currency
+  splitType   SplitType
+
+  // ---- FX snapshot fields (only populated when currency != INR) ----
+  // amountInr:    amount * fxRateToInr, rounded to 2dp. This is the value
+  //               the balance engine actually uses for every currency.
+  // fxRateToInr:  the rate (1 unit of `currency` = fxRateToInr INR) at the
+  //               time of import, for `date` (historical rate).
+  // fxRateDate:   the date the rate was looked up FOR (should equal `date`,
+  //               but stored separately in case of same-day fallback).
+  amountInr   Decimal? @db.Decimal(12, 2)
+  fxRateToInr Decimal? @db.Decimal(10, 4)
+  fxRateDate  DateTime?
+
+  paidById String
+  paidBy   User   @relation("ExpensePaidBy", fields: [paidById], references: [id])
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  splits ExpenseSplit[]
+
+  // If this expense was created via CSV import, link back to the staging
+  // row it came from. Nullable because expenses can also be created
+  // directly through the app (not just import).
+  importedFromRowId String?    @unique
+  importedFromRow   ImportRow?  @relation(fields: [importedFromRowId], references: [id])
+
+  notes String? // free-text notes column from CSV, preserved for audit trail
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([groupId, date])
+  @@map("expenses")
+}
+
+// One row per participant per expense. The sum of all ExpenseSplit.amount
+// for a given expense should equal that expense's amountInr (or `amount`
+// if INR) — this invariant is checked by the split-calculation logic
+// (Module 4) and is exactly what lets us answer Rohan's "show me exactly
+// which expenses make up the number" requirement: every balance is
+// traceable to a list of these rows.
+model ExpenseSplit {
+  id            String  @id @default(cuid())
+  expenseId     String
+
+  // userId is NULLABLE — null when the split belongs to a placeholder GroupMember
+  // who has no registered account. Use groupMemberId as the authoritative reference
+  // for participant identity when coming from the CSV import pipeline.
+  userId        String?
+
+  // groupMemberId points to the GroupMember record (covers both real users and
+  // placeholder members). Populated for all CSV-imported splits.
+  groupMemberId String?
+
+  // The amount THIS PARTICIPANT owes for THIS EXPENSE, in INR (post-conversion).
+  amount      Decimal @db.Decimal(12, 2)
+
+  // For PERCENTAGE/SHARE split types, store the raw input value too.
+  shareValue  Decimal? @db.Decimal(10, 4)
+
+  expense     Expense      @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user        User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  groupMember GroupMember? @relation(fields: [groupMemberId], references: [id], onDelete: SetNull)
+
+  @@unique([expenseId, userId])        // a real user only appears once per expense
+  @@unique([expenseId, groupMemberId]) // a group member only appears once per expense
+  @@index([userId])
+  @@index([groupMemberId])
+  @@map("expense_splits")
+}
+
+// -----------------------------------------------------------------------------
+// SETTLEMENT
+// -----------------------------------------------------------------------------
+
+// A direct payment from one user to another that reduces what one owes the
+// other. Deliberately separate from Expense (see top-of-file rationale).
+// The balance engine nets Settlements against the ExpenseSplit-derived
+// balances as a final step.
+model Settlement {
+  id         String   @id @default(cuid())
+  groupId    String
+  fromUserId String   // who PAID (the debtor settling up)
+  toUserId   String   // who RECEIVED the payment
+  amount     Decimal  @db.Decimal(12, 2) // always stored in INR
+  date       DateTime
+  notes      String?
+
+  group    Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  fromUser User  @relation("SettlementFrom", fields: [fromUserId], references: [id])
+  toUser   User  @relation("SettlementTo", fields: [toUserId], references: [id])
+
+  // If this settlement was reclassified from a misfiled CSV "expense" row
+  // (anomaly #6), link back to the staging row.
+  importedFromRowId String?    @unique
+  importedFromRow   ImportRow?  @relation(fields: [importedFromRowId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([groupId])
+  @@map("settlements")
+}
+
+// -----------------------------------------------------------------------------
+// AUDIT LOG (Module 8 — table defined now to avoid a later migration)
+// -----------------------------------------------------------------------------
+
+// Append-only record of significant actions: expense created/edited/deleted,
+// settlement recorded, import committed, membership changed, anomaly
+// resolved. entityType/entityId let us point at "the thing that changed";
+// beforeData/afterData (JSON) capture the diff for traceability.
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?  // who performed the action (null for system actions)
+  action     String   // e.g. "EXPENSE_CREATED", "IMPORT_ROW_RESOLVED"
+  entityType String   // e.g. "Expense", "GroupMembership", "ImportStagingRow"
+  entityId   String
+  beforeData Json?
+  afterData  Json?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+// -----------------------------------------------------------------------------
+// IMPORT ENGINE STAGING
+// -----------------------------------------------------------------------------
+
+// Tracks overall progress of a CSV import file job.
+model ImportJob {
+  id               String          @id @default(cuid())
+  groupId          String
+  fileName         String
+  status           ImportJobStatus @default(PROCESSING)
+  totalRows        Int
+  uploadedById     String
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  committedAt      DateTime?
+
+  // Member Mapping Workflow fields
+  // participantNames: JSON array of all unique raw CSV participant names extracted
+  // from paid_by + split_with columns. Used to drive the mapping screen.
+  participantNames Json?           // string[]
+  mappingComplete  Boolean         @default(false)
+
+  group        Group           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  rows         ImportRow[]
+  decisions    ImportDecision[]
+  report       ImportReport?
+
+  @@map("import_jobs")
+}
+
+// Holds single parsed row raw content in staging.
+model ImportRow {
+  id             String            @id @default(cuid())
+  importJobId    String
+  rowNumber      Int               // 1-indexed position in CSV
+  rawData        Json              // original row key-value fields
+  resolvedData   Json?             // fields after user adjustments
+  status         ImportRowStatus   @default(PENDING)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  importJob      ImportJob         @relation(fields: [importJobId], references: [id], onDelete: Cascade)
+  anomalies      ImportAnomaly[]
+  decisions      ImportDecision[]
+  resultingExpense Expense?
+  resultingSettlement Settlement?
+
+  @@index([importJobId, status])
+  @@map("import_rows")
+}
+
+// Single anomaly flag details on a row.
+model ImportAnomaly {
+  id              String          @id @default(cuid())
+  importRowId     String
+  anomalyType     AnomalyType
+  severity        AnomalySeverity
+  rowNumber       Int
+  description     String
+  suggestedAction String          // text description of system proposal
+  resolvedAt      DateTime?
+  resolvedById    String?
+
+  importRow       ImportRow       @relation(fields: [importRowId], references: [id], onDelete: Cascade)
+
+  @@map("import_anomalies")
+}
+
+// Capture user-action decisions for row resolution.
+model ImportDecision {
+  id              String             @id @default(cuid())
+  importJobId     String
+  importRowId     String
+  resolution      AnomalyResolution
+  decisionDetails Json?              // resolution payload config (e.g. correct name, duplicateOf row number)
+  resolvedById    String
+  resolvedAt      DateTime           @default(now())
+
+  importJob       ImportJob          @relation(fields: [importJobId], references: [id], onDelete: Cascade)
+  importRow       ImportRow          @relation(fields: [importRowId], references: [id], onDelete: Cascade)
+
+  @@unique([importRowId])            // only one active decision per row
+  @@map("import_decisions")
+}
+
+// Summary statistic reports generated for a job.
+model ImportReport {
+  id                     String    @id @default(cuid())
+  importJobId            String    @unique
+  totalRows              Int
+  cleanRows              Int
+  anomaliesCount         Int
+  resolvedCount          Int
+  excludedCount          Int
+  duplicatesCount        Int
+  summaryData            Json?     // additional custom summary logs
+  createdAt              DateTime  @default(now())
+
+  importJob              ImportJob @relation(fields: [importJobId], references: [id], onDelete: Cascade)
+
+  @@map("import_reports")
+}

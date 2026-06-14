@@ -1,0 +1,204 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #fdfbf7;
+    background-image: radial-gradient(#e5e0d8 1.5px, transparent 1.5px);
+    background-size: 24px 24px;
+    color: #2d2d2d;
+    font-family: var(--font-patrick-hand), cursive;
+    min-height: 100vh;
+    position: relative;
+  }
+
+  /* Custom input overrides to look like hand-drawn sketching slots */
+  input, select, textarea {
+    background-color: #ffffff !important;
+    border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px !important;
+    border: 2.5px solid #2d2d2d !important;
+    color: #2d2d2d !important;
+    font-family: var(--font-patrick-hand), cursive !important;
+    padding: 0.5rem 1rem !important;
+    transition: border-color 0.15s, box-shadow 0.15s !important;
+    box-shadow: 2px 2px 0px 0px rgba(45, 45, 45, 0.1) !important;
+  }
+  
+  input:focus, select:focus, textarea:focus {
+    outline: none !important;
+    border-color: #2d5da1 !important;
+    box-shadow: 3px 3px 0px 0px #2d2d2d !important;
+  }
+
+  /* Style date calendar picker icon to look pen-drawn */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: grayscale(1) contrast(1.5);
+    cursor: pointer;
+  }
+
+  /* Notebook scrollbar style */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #fdfbf7;
+    border-left: 2px solid #2d2d2d;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #e5e0d8;
+    border: 2px solid #2d2d2d;
+    border-radius: 5px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #ff4d4d;
+  }
+}
+
+@layer components {
+  /* Kalam marker headings */
+  .marker-heading {
+    font-family: var(--font-kalam), cursive;
+    font-weight: 700;
+  }
+
+  /* Hand-drawn wobbly paper card */
+  .handdrawn-card {
+    background-color: #ffffff;
+    border: 3px solid #2d2d2d;
+    border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+    box-shadow: 4px 4px 0px 0px #2d2d2d;
+    transition: transform 0.1s, box-shadow 0.1s;
+  }
+
+  /* Sticky Post-it note */
+  .postit-card {
+    background-color: #fff9c4;
+    border: 2.5px solid #2d2d2d;
+    border-radius: 15px 225px 15px 255px / 255px 15px 225px 15px;
+    box-shadow: 5px 5px 0px 0px #2d2d2d;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .postit-card:hover {
+    transform: rotate(1.5deg) scale(1.02);
+    box-shadow: 7px 7px 0px 0px #2d2d2d;
+  }
+
+  /* Wobbly button with pressing active shadow state */
+  .handdrawn-btn {
+    display: inline-block;
+    border: 2.5px solid #2d2d2d;
+    background-color: #ffffff;
+    color: #2d2d2d;
+    font-family: var(--font-patrick-hand), cursive;
+    font-size: 1.125rem;
+    font-weight: bold;
+    padding: 0.5rem 1.25rem;
+    text-align: center;
+    border-radius: 225px 15px 255px 15px / 15px 255px 15px 225px;
+    box-shadow: 4px 4px 0px 0px #2d2d2d;
+    cursor: pointer;
+    transition: transform 0.1s, background-color 0.1s, color 0.1s, box-shadow 0.1s;
+    text-decoration: none;
+  }
+
+  .handdrawn-btn:hover {
+    background-color: #ff4d4d;
+    color: #ffffff;
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0px 0px #2d2d2d;
+  }
+
+  .handdrawn-btn:active {
+    transform: translate(4px, 4px);
+    box-shadow: 0px 0px 0px 0px #2d2d2d;
+  }
+
+  .handdrawn-btn-secondary {
+    display: inline-block;
+    border: 2.5px solid #2d2d2d;
+    background-color: #e5e0d8;
+    color: #2d2d2d;
+    font-family: var(--font-patrick-hand), cursive;
+    font-size: 1.125rem;
+    font-weight: bold;
+    padding: 0.5rem 1.25rem;
+    text-align: center;
+    border-radius: 15px 255px 15px 225px / 255px 15px 225px 15px;
+    box-shadow: 4px 4px 0px 0px #2d2d2d;
+    cursor: pointer;
+    transition: transform 0.1s, background-color 0.1s, color 0.1s, box-shadow 0.1s;
+    text-decoration: none;
+  }
+
+  .handdrawn-btn-secondary:hover {
+    background-color: #2d5da1;
+    color: #ffffff;
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0px 0px #2d2d2d;
+  }
+
+  .handdrawn-btn-secondary:active {
+    transform: translate(4px, 4px);
+    box-shadow: 0px 0px 0px 0px #2d2d2d;
+  }
+
+  /* Translucent paper tape overlay */
+  .tape-effect {
+    position: relative;
+  }
+  .tape-effect::before {
+    content: "";
+    position: absolute;
+    top: -12px;
+    left: 50%;
+    transform: translateX(-50%) rotate(-2deg);
+    width: 90px;
+    height: 25px;
+    background-color: rgba(229, 224, 216, 0.7);
+    border-left: 2.5px dashed rgba(45, 45, 45, 0.4);
+    border-right: 2.5px dashed rgba(45, 45, 45, 0.4);
+    box-shadow: 1px 1px 2px rgba(0,0,0,0.05);
+    z-index: 10;
+  }
+
+  /* Red thumbtack push pin */
+  .tack-effect {
+    position: relative;
+  }
+  .tack-effect::before {
+    content: "";
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 16px;
+    height: 16px;
+    background-color: #ff4d4d;
+    border: 2px solid #2d2d2d;
+    border-radius: 50%;
+    box-shadow: 1.5px 1.5px 0px rgba(0,0,0,0.2), inset -3px -3px 0px rgba(0,0,0,0.15);
+    z-index: 10;
+  }
+
+  /* Notebook binder margin line (vertical line on the left side of paper) */
+  .notebook-margin-line {
+    border-left: 2px double rgba(255, 77, 77, 0.35);
+  }
+
+  /* Sketchy divider line */
+  .handdrawn-divider {
+    border: none;
+    height: 3px;
+    background-image: linear-gradient(to right, #2d2d2d 50%, transparent 50%);
+    background-size: 8px 100%;
+    width: 100%;
+  }
+
+  /* Red correction pen style */
+  .correction-text {
+    color: #ff4d4d;
+    font-family: var(--font-kalam), cursive;
+  }
+}
