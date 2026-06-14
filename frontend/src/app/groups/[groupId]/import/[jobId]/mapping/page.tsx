@@ -111,7 +111,7 @@ export default function MappingPage() {
 
   // Derived counts
   const resolvedCount = Object.values(decisions).filter((d) => d.action !== null).length;
-  const totalCount    = participants.length;
+  const totalCount    = (participants ?? []).length;
   const allResolved   = resolvedCount === totalCount && totalCount > 0;
   const progressPct   = totalCount > 0 ? Math.round((resolvedCount / totalCount) * 100) : 0;
 
@@ -137,7 +137,7 @@ export default function MappingPage() {
     setSubmitting(true);
     setError(null);
     try {
-      const payload: MappingDecision[] = participants.map((p) => {
+      const payload: MappingDecision[] = (participants ?? []).map((p) => {
         const d = decisions[p.csvName];
         if (!d || !d.action) {
           // shouldn't happen if button is disabled properly, but safety fallback
@@ -237,7 +237,7 @@ export default function MappingPage() {
           </div>
 
           {/* Rows */}
-          {participants.map((p) => {
+          {(participants ?? []).map((p) => {
             const d = decisions[p.csvName];
             const hasDecision = d?.action != null;
 
@@ -325,12 +325,12 @@ export default function MappingPage() {
                         className="text-sm border-2 border-dashed border-paper-text/30 rounded px-2 py-1.5 bg-white text-paper-text
                           focus:outline-none focus:border-paper-blue min-w-[180px]"
                       >
-                        {members.length === 0 ? (
+                        {(members ?? []).length === 0 ? (
                           <option value="" disabled>No group members found</option>
                         ) : (
                           <option value="">— Select user —</option>
                         )}
-                        {members.map((m) => {
+                        {(members ?? []).map((m) => {
                           const dateStr = m.joinedAt ? new Date(m.joinedAt).toLocaleDateString() : '';
                           const leftStr = m.leftAt ? ` (Left: ${new Date(m.leftAt).toLocaleDateString()})` : '';
                           return (

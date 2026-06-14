@@ -403,15 +403,15 @@ export default function GroupDetailPage() {
                 👥 Active Flatmates
               </h2>
               <span className="text-xs font-bold bg-paper-muted border border-paper-border px-2 py-0.5 rounded">
-                COUNT: {group.currentMembers.length}
+                COUNT: {(group.currentMembers ?? []).length}
               </span>
             </div>
 
-            {group.currentMembers.length === 0 ? (
+            {(group.currentMembers ?? []).length === 0 ? (
               <p className="text-sm text-paper-text/60 italic font-bold">// No active flatmates listed</p>
             ) : (
               <ul className="divide-y-2 divide-dashed divide-paper-border">
-                {group.currentMembers.map((m) => (
+                {(group.currentMembers ?? []).map((m) => (
                   <MemberRow key={m.membershipId} member={m} isAdmin={isAdmin} />
                 ))}
               </ul>
@@ -419,19 +419,19 @@ export default function GroupDetailPage() {
           </div>
 
           {/* Past Members Section */}
-          {group.pastMembers.length > 0 && (
+          {(group.pastMembers ?? []).length > 0 && (
             <div className="handdrawn-card p-6 bg-white rotate-[-0.5deg]">
               <button
                 onClick={() => setShowPast((s) => !s)}
                 className="flex items-center justify-between w-full text-left marker-heading text-lg text-paper-text uppercase hover:text-paper-blue transition-colors"
               >
-                <span>📁 Past Flatmates ({group.pastMembers.length})</span>
+                <span>📁 Past Flatmates ({(group.pastMembers ?? []).length})</span>
                 <span>{showPast ? "▾" : "▸"}</span>
               </button>
 
               {showPast && (
                 <ul className="mt-4 divide-y-2 divide-dashed divide-paper-border pt-2">
-                  {group.pastMembers.map((m) => (
+                  {(group.pastMembers ?? []).map((m) => (
                     <MemberRow key={m.membershipId} member={m} isAdmin={isAdmin} />
                   ))}
                 </ul>

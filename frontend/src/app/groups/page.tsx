@@ -81,7 +81,7 @@ export default function GroupsPage() {
             ⚠️ ERROR: {error}
           </p>
         </div>
-      ) : groups.length === 0 ? (
+      ) : (groups ?? []).length === 0 ? (
         <div className="handdrawn-card p-12 text-center bg-white relative tape-effect">
           <span className="text-4xl">🗂️</span>
           <p className="marker-heading text-2xl text-paper-text mt-3">No groups created yet!</p>
@@ -98,7 +98,7 @@ export default function GroupsPage() {
         </div>
       ) : (
         <ul className="space-y-4">
-          {groups.map((group, idx) => {
+          {(groups ?? []).map((group, idx) => {
             // Alternate rotations for authentic sketchbook look
             const rot = idx % 2 === 0 ? "hover:rotate-[1deg]" : "hover:rotate-[-1deg]";
             return (

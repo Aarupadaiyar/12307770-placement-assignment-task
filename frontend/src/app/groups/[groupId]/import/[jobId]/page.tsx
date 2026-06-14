@@ -110,9 +110,9 @@ function AnomalyRowCard({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const hasAnomalies = row.anomalies.length > 0;
-  const hasDecision = row.decisions.length > 0;
-  const currentDecision = row.decisions[0];
+  const hasAnomalies = (row.anomalies ?? []).length > 0;
+  const hasDecision = (row.decisions ?? []).length > 0;
+  const currentDecision = (row.decisions ?? [])[0];
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -450,20 +450,20 @@ export default function ImportReviewPage() {
   }
 
   const report = job.report;
-  const pendingCount = job.rows.filter((r) => r.status === "PENDING").length;
+  const pendingCount = (job.rows ?? []).filter((r) => r.status === "PENDING").length;
   const allResolved = pendingCount === 0;
   const canCommit = allResolved && job.status !== "COMMITTED";
 
   const filteredRows = filter === "ALL"
-    ? job.rows
-    : job.rows.filter((r) => r.status === filter);
+    ? (job.rows ?? [])
+    : (job.rows ?? []).filter((r) => r.status === filter);
 
   const statusCounts = {
-    ALL: job.rows.length,
-    PENDING: job.rows.filter((r) => r.status === "PENDING").length,
-    CLEAN: job.rows.filter((r) => r.status === "CLEAN").length,
-    RESOLVED: job.rows.filter((r) => r.status === "RESOLVED").length,
-    EXCLUDED: job.rows.filter((r) => r.status === "EXCLUDED").length,
+    ALL: (job.rows ?? []).length,
+    PENDING: (job.rows ?? []).filter((r) => r.status === "PENDING").length,
+    CLEAN: (job.rows ?? []).filter((r) => r.status === "CLEAN").length,
+    RESOLVED: (job.rows ?? []).filter((r) => r.status === "RESOLVED").length,
+    EXCLUDED: (job.rows ?? []).filter((r) => r.status === "EXCLUDED").length,
   };
 
   return (
@@ -556,7 +556,7 @@ export default function ImportReviewPage() {
           <div>
             <p className="marker-heading text-lg text-green-700">✅ All rows resolved!</p>
             <p className="text-xs font-bold text-green-600 mt-0.5">
-              Ready to commit {job.rows.filter((r) => !["EXCLUDED"].includes(r.status)).length} rows into the expense ledger.
+              Ready to commit {(job.rows ?? []).filter((r) => !["EXCLUDED"].includes(r.status)).length} rows into the expense ledger.
             </p>
           </div>
           <button

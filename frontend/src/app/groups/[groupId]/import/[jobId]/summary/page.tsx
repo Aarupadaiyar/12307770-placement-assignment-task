@@ -70,8 +70,8 @@ export default function ImportSummaryPage() {
   }
 
   const report = job.report;
-  const committedRows = job.rows.filter((r) => r.status === "COMMITTED");
-  const excludedRows = job.rows.filter((r) => r.status === "EXCLUDED");
+  const committedRows = (job.rows ?? []).filter((r) => r.status === "COMMITTED");
+  const excludedRows = (job.rows ?? []).filter((r) => r.status === "EXCLUDED");
   const isCommitted = job.status === "COMMITTED";
 
   return (
